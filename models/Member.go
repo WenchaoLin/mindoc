@@ -156,6 +156,12 @@ func (m *Member) ldapLogin(account string, password string) (*Member, error) {
 	ldapfilter, _ := web.AppConfig.String("ldap_filter")
 	ldapaccount, _ := web.AppConfig.String("ldap_account")
 	ldapmail, _ := web.AppConfig.String("ldap_mail")
+
+	logs.Warn("ldap_base->",ldapbase)
+	logs.Warn("ldap_filter->",ldapfilter)
+	logs.Warn("ldap_account->",ldapaccount)
+	logs.Warn("ldap_mail->",ldapmail)
+
 	// 判断account是否是email
 	isEmail := false
 	var email string
@@ -165,22 +171,35 @@ func (m *Member) ldapLogin(account string, password string) (*Member, error) {
 		email = account
 		ldapattr = ldapmail
 	}
+
+	searchFilter := fmt.Sprintf("(&(%s)(%s=%s))", ldapfilter, ldapattr, account)
+	logs.Warn("Search Filter:", searchFilter)
+
 	searchRequest := ldap.NewSearchRequest(
 		ldapbase,
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
 		// 修改objectClass通过配置文件获取值
 		fmt.Sprintf("(&(%s)(%s=%s))", ldapfilter, ldapattr, account),
-		[]string{"dn", "mail", "cn", "ou", "sAMAccountName"},
+		[]string{"dn", "mail", "cn", "ou", ldapaccount},
 		nil,
 	)
+
 	searchResult, err := lc.Search(searchRequest)
 	if err != nil {
 		logs.Error("绑定 LDAP 用户失败 ->", err)
 		return m, ErrLDAPSearch
 	}
+
+	// 如果没有找到用户，返回错误
+	if len(searchResult.Entries) == 0 {
+		logs.Warn("未找到符合条件的 LDAP 用户")
+		return m, ErrLDAPUserNotFoundOrTooMany
+	}
+
 	if len(searchResult.Entries) != 1 {
 		return m, ErrLDAPUserNotFoundOrTooMany
 	}
+
 	userdn := searchResult.Entries[0].DN
 	err = lc.Bind(userdn, password)
 	if err != nil {
